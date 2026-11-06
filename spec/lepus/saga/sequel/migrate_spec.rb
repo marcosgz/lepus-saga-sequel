@@ -2,22 +2,16 @@
 
 RSpec.describe Lepus::Saga::Sequel, ".migrate" do
   let(:db) { Database.db }
-  let(:indexes) do
+  let(:execution_indexes) do
     {
-      saga_executions: %i[
-        index_saga_executions_on_saga_name_and_created_at
-        index_saga_executions_on_status_and_created_at
-        index_saga_executions_on_finished_at
-      ],
-      saga_step_attempts: %i[
-        index_saga_step_attempts_on_started_at
-        index_saga_step_attempts_on_error_class_and_started_at
-      ]
+      idx_saga_executions_on_resource: %i[resource_type resource_id started_at],
+      index_saga_executions_on_started_at_and_id: %i[started_at id],
+      index_saga_executions_on_duration_ms_and_id: %i[duration_ms id],
+      index_saga_executions_on_finished_at: %i[finished_at],
+      index_saga_executions_on_saga_name_and_started_at: %i[saga_name started_at],
+      index_saga_executions_on_status_and_started_at: %i[status started_at],
+      index_saga_executions_on_partition_and_started_at: %i[partition started_at]
     }
-  end
-
-  def present_indexes
-    indexes.to_h { |table, names| [table, names & db.indexes(table).keys] }
   end
 
   def version = db[described_class::MIGRATIONS_TABLE].get(:version)
@@ -46,32 +40,24 @@ RSpec.describe Lepus::Saga::Sequel, ".migrate" do
   end
 
   it "records its version in its own table and runs once" do
-    expect(version).to eq(2)
+    expect(version).to eq(1)
     expect { described_class.migrate(db) }.not_to(change { db.indexes(:saga_executions) })
-    expect(version).to eq(2)
+    expect(version).to eq(1)
   end
 
-  it "rolls the dashboard indexes back and forward" do
-    expect(present_indexes).to eq(indexes)
+  it "indexes the columns the store sorts and filters executions on" do
+    present = db.indexes(:saga_executions).transform_values { |index| index[:columns] }
 
-    described_class.migrate(db, target: 1)
-    expect(present_indexes).to eq(saga_executions: [], saga_step_attempts: [])
-
-    described_class.migrate(db)
-    expect(present_indexes).to eq(indexes)
-  ensure
-    described_class.migrate(db)
+    expect(present).to include(execution_indexes)
+    expect(present.values.flatten).not_to include(:created_at)
+    expect(db.indexes(:saga_step_attempts).transform_values { |index| index[:columns] }).to include(
+      index_saga_step_attempts_on_started_at: %i[started_at],
+      index_saga_step_attempts_on_error_class_and_started_at: %i[error_class started_at]
+    )
   end
 
-  it "adds the dashboard indexes to tables created without them" do
-    indexes.each { |table, names| names.each { |name| db.alter_table(table) { drop_index(nil, name: name) } } }
-    db[described_class::MIGRATIONS_TABLE].update(version: 1)
-
-    described_class.migrate(db)
-
-    expect(present_indexes).to eq(indexes)
-  ensure
-    described_class.migrate(db)
+  it "stores the duration as a bigint" do
+    expect(db.schema(:saga_executions).to_h[:duration_ms][:db_type]).to match(/bigint/i)
   end
 
   it "drops and recreates the tables" do

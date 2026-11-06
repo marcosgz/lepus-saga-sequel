@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.3.1 - Unreleased
+* Fixed: executions list in time order when their ids are not time-ordered (e.g. random UUIDv4): `list_executions` sorts and pages by (sort value, id) with `after`, `executions_for_resource` and `recent_first` order by started_at, then id
+* Added: the `duration_ms` bigint column, the `sort`/`direction`/`after` options of `list_executions` (keyset paging in at most two queries that start the `(column, id)` index at the cursor, executions without a duration last), the `finished_from`/`finished_to` filters and `executed_steps` in one query
+* Changed: the `from`/`to` filters and the series' starts use started_at; `lepus-saga ~> 0.3.1` is required
+* Changed: dashboard indexes folded into the install migration (pre-release): migration 001 indexes `saga_executions (started_at, id)`, `(duration_ms, id)`, `(finished_at)`, `(saga_name, started_at)`, `(status, started_at)`, `(partition, started_at)` and the resource index on `(resource_type, resource_id, started_at)`; the created_at indexes and migration 002 are gone, so a database that ran 002 needs its tables recreated
+
 ## 0.3.0 - Unreleased
 * Added: brand mark and README logo
 * Added: `Lepus::Saga::Stores::Sequel`, selected with `Lepus::Saga.configure { |c| c.store = :sequel }`, and `Lepus::Saga::Sequel.db=` to bind the models to a database other than `Sequel::Model.db`
