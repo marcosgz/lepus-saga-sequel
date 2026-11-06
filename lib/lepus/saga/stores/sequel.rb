@@ -61,7 +61,7 @@ module Lepus
         end
 
         def stalled_executions(before:)
-          execution_class.in_progress.where(::Sequel[:last_progress_at] < before).order(:last_progress_at).all
+          execution_class.in_progress.where(::Sequel[:last_progress_at] < before).order(:last_progress_at, :id).all
         end
 
         def executions_for_resource(resource_type, resource_id)
@@ -107,10 +107,29 @@ module Lepus
 
         def queries? = true
 
-        def list_executions(before_id: nil, limit: 50, **filters)
+        # Keyset paging in up to two index-friendly queries: the executions
+        # with a value in (value, id) order, then those without one by id.
+        def list_executions(sort: :started_at, direction: :desc, after: nil, limit: 50, **filters)
+          column, descending, nullable = list_order(sort, direction)
           scope = matching_executions(**filters)
-          scope = scope.where(::Sequel[:id] < before_id) if before_id
-          scope.order(::Sequel.desc(:id)).limit(limit).all
+          order = ->(name) { descending ? ::Sequel.desc(name) : ::Sequel.asc(name) }
+          if after
+            cursor = execution_class.where(id: after).get([:id, column])
+            return [] unless cursor
+          end
+
+          in_nulls = cursor && cursor.last.nil?
+          rows = []
+          unless in_nulls
+            valued = nullable ? scope.exclude(column => nil) : scope
+            valued = valued.where(beyond(column, after, descending)) if cursor
+            rows = valued.order(order.call(column), order.call(:id)).limit(limit).all
+          end
+          return rows unless nullable && rows.size < limit
+
+          unvalued = scope.where(column => nil)
+          unvalued = unvalued.where(descending ? ::Sequel[:id] < after : ::Sequel[:id] > after) if in_nulls
+          rows + unvalued.order(order.call(:id)).limit(limit - rows.size).all
         end
 
         def count_executions(group_by:, **filters)
@@ -124,8 +143,8 @@ module Lepus
           seconds = series_bucket(from, to, bucket)
           scope = matching_executions(saga_name: saga_name)
           started, started_truncated = take_rows(
-            in_window(scope, :created_at, from, to)
-              .order(::Sequel.desc(:created_at)).limit(max_rows + 1).select_map(:created_at),
+            in_window(scope, :started_at, from, to)
+              .order(::Sequel.desc(:started_at)).limit(max_rows + 1).select_map(:started_at),
             max_rows
           )
           finished, finished_truncated = take_rows(
@@ -211,8 +230,21 @@ module Lepus
           scope
         end
 
+        # Rows strictly after the execution `after` in (column, id) order,
+        # comparing against its stored value in a subquery so no precision is
+        # lost on the way through Ruby.
+        def beyond(column, after, descending)
+          value = execution_class.where(id: after).select(column)
+          compare = descending ? :< : :>
+          ::Sequel.|(
+            ::Sequel::SQL::BooleanExpression.new(compare, ::Sequel[column], value),
+            ::Sequel.&(::Sequel::SQL::BooleanExpression.new(:"=", ::Sequel[column], value), ::Sequel::SQL::BooleanExpression.new(compare, ::Sequel[:id], after))
+          )
+        end
+
         def matching_executions(saga_name: nil, status: nil, current_step: nil, partition: nil, resource: nil, from: nil, to: nil,
-          progress_from: nil, progress_to: nil, error_class: nil, error_step: nil, error_from: nil, error_to: nil)
+          progress_from: nil, progress_to: nil, finished_from: nil, finished_to: nil, error_class: nil, error_step: nil, error_from: nil,
+          error_to: nil)
           sagas = filter_values(saga_name)
           statuses = filter_values(status)
           steps = filter_values(current_step)
@@ -220,8 +252,9 @@ module Lepus
           scope = scope.where(saga_name: sagas) if sagas
           scope = scope.where(status: statuses) if statuses
           scope = scope.where(current_step: steps) if steps
-          scope = in_window(scope, :created_at, from, to)
+          scope = in_window(scope, :started_at, from, to)
           scope = in_window(scope, :last_progress_at, progress_from, progress_to)
+          scope = in_window(scope, :finished_at, finished_from, finished_to)
           failing = failed_attempts(filter_values(error_class), filter_values(error_step), error_from, error_to)
           scope = scope.where(id: failing.select(:saga_execution_id)) if failing
           scope = scope.where(in_partition(partition.to_s)) unless blank?(partition)

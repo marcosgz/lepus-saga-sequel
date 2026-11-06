@@ -17,18 +17,21 @@ Sequel.migration do
       String :partition
       DateTime :started_at, null: false
       DateTime :finished_at
+      Bignum :duration_ms
       DateTime :last_progress_at, null: false
       Integer :resume_count, null: false, default: 0
       DateTime :created_at, null: false
       DateTime :updated_at, null: false
 
-      index %i[resource_type resource_id created_at], name: :idx_saga_executions_on_resource
+      index %i[resource_type resource_id started_at], name: :idx_saga_executions_on_resource
       index %i[status updated_at], name: :index_saga_executions_on_status_and_updated_at
       index %i[status last_progress_at], name: :index_saga_executions_on_status_and_progress
-      index %i[partition created_at], name: :index_saga_executions_on_partition_and_created_at
-      index %i[saga_name created_at], name: :index_saga_executions_on_saga_name_and_created_at
-      index %i[status created_at], name: :index_saga_executions_on_status_and_created_at
+      index %i[started_at id], name: :index_saga_executions_on_started_at_and_id
+      index %i[duration_ms id], name: :index_saga_executions_on_duration_ms_and_id
       index :finished_at, name: :index_saga_executions_on_finished_at
+      index %i[partition started_at], name: :index_saga_executions_on_partition_and_started_at
+      index %i[saga_name started_at], name: :index_saga_executions_on_saga_name_and_started_at
+      index %i[status started_at], name: :index_saga_executions_on_status_and_started_at
     end
 
     create_table?(:saga_step_attempts) do

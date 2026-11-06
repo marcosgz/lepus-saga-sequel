@@ -27,7 +27,7 @@ Lepus::Saga::Sequel.migrate(DB, target: 0)   # drop them
 
 The version is tracked in its own `lepus_saga_schema_info` table, so it never collides with your app's `schema_info` or `schema_migrations`. To keep everything in one migration history instead, copy the files from `lib/lepus/saga/sequel/migrations` into your own migrations directory.
 
-Ids are UUIDv7 strings generated in Ruby, the context columns are `json` and `failure_reason` is `text` (a step's error message can outgrow `VARCHAR(255)`, and MySQL/MariaDB strict mode would reject the write that fails the saga). The table, column and index names are the ones the lepus-saga-active_record generator creates, so an app can move between the two gems on the same tables. Column types can differ slightly: Sequel creates unsized strings as `text` on PostgreSQL and `duration_ms` as a double-precision float on MySQL/MariaDB.
+Ids are UUIDv7 strings generated in Ruby, the context columns are `json` and `failure_reason` is `text` (a step's error message can outgrow `VARCHAR(255)`, and MySQL/MariaDB strict mode would reject the write that fails the saga). The table, column and index names are the ones the lepus-saga-active_record generator creates, so an app can move between the two gems on the same tables. Column types can differ slightly: Sequel creates unsized strings as `text` on PostgreSQL and the step attempts' `duration_ms` as a double-precision float on MySQL/MariaDB. `saga_executions.duration_ms` is a `bigint` the engine writes when an execution ends. Besides the resource, progress and attempt indexes the engine uses, the migration indexes what the console sorts and filters on: `saga_executions (started_at, id)`, `(duration_ms, id)`, `(finished_at)`, `(saga_name, started_at)`, `(status, started_at)` and `(partition, started_at)`, and `saga_step_attempts (started_at)` and `(error_class, started_at)`.
 
 ## Configuration
 
@@ -106,11 +106,13 @@ Lepus::Saga::Sequel::Execution.exclude(id: pinned_ids).prune(finished_before: Ti
 | `save_execution`, `save_step_attempt` | `save`, which writes every column, so a context changed in place is persisted |
 | `increment_resume_count` | `UPDATE ... SET resume_count = resume_count + 1, updated_at = ?`, then reads the stored value back |
 | `create_step_attempt` | `create`; `Sequel::UniqueConstraintViolation` from `idx_saga_step_attempts_dedup` becomes `Lepus::Saga::DuplicateAttemptError` |
-| `stalled_executions(before:)` | `in_progress.where(last_progress_at < before).order(:last_progress_at).all` |
+| `stalled_executions(before:)` | `in_progress.where(last_progress_at < before).order(:last_progress_at, :id).all` |
+| `executions_for_resource` | `for_resource(type, id).recent_first`: `ORDER BY started_at DESC, id DESC` on the resource index |
 | attempt queries | `where(saga_execution_id:, step_name:, direction:, epoch:)` plus `count`/`empty?` |
-| `list_executions` | Filters on the executions table, `order(Sequel.desc(:id))` with `id < before_id` for keyset paging; the resource search is `ILIKE` with the LIKE wildcards escaped; the error filters are `id IN (SELECT saga_execution_id FROM saga_step_attempts WHERE status = 'failed' ...)` |
+| `list_executions` | Filters on the executions table, ordered by `(started_at, id)`, `(duration_ms, id)` or `(finished_at, id)` in the requested direction. Paging is keyset: rows after `after` compare against its stored value in a subquery (`col < (SELECT col ... WHERE id = ?) OR (col = (SELECT ...) AND id < ?)`). For a nullable sort it runs at most two queries, the rows with a value and then, when the page is not full, the rows without one by id, so both use the `(column, id)` index and nulls come last either way; the resource search is `ILIKE` with the LIKE wildcards escaped; the error filters are `id IN (SELECT saga_execution_id FROM saga_step_attempts WHERE status = 'failed' ...)` |
 | `count_executions` | `group_and_count(...)`; grouping by partition also groups by saga name to resolve executions without one |
-| `execution_series` | Selects `created_at`, and `finished_at` and `status` of terminal executions, newest first and at most `max_rows` + 1; buckets them in Ruby |
+| `finished_executions` | Base's: `count_executions` grouped by saga and status over `finished_from`/`finished_to`, then one `list_executions(sort: :finished_at)` per saga, on the `finished_at` index |
+| `execution_series` | Selects `started_at`, and `finished_at` and `status` of terminal executions, newest first and at most `max_rows` + 1; buckets them in Ruby |
 | `step_latency` | Joins attempts to executions and selects the newest `max_rows` + 1 durations; percentiles in Ruby |
 | `failure_summary` | `GROUP BY error_class, saga_name, step_name` with `COUNT(*)` and `COUNT(DISTINCT saga_execution_id)`, ordered by `COUNT(*)` and `MAX(finished_at)`, then one query per group for its latest failure |
 | `saga_names` | `distinct.order(:saga_name).select_map(:saga_name)` |
@@ -129,11 +131,9 @@ The `many_to_one :execution` of a step attempt is not validated, because the for
 
 ## Existing tables
 
-The first migration uses `create_table?`, so it adopts tables that already exist (created by hand or by the lepus-saga-active_record generator). Note that rolling it back drops them.
+The migration uses `create_table?`, so it adopts tables that already exist (created by hand or by the lepus-saga-active_record generator). Note that rolling it back drops them.
 
-Tables created before the indexes the query methods filter on existed lack them. The second migration adds `saga_executions (saga_name, created_at)`, `(status, created_at)` and `(finished_at)`, and `saga_step_attempts (started_at)` and `(error_class, started_at)`, skipping any that already exist.
-
-Tables created by hand (PostgreSQL `uuid` ids, `jsonb` context) work too: the models set UUIDv7 ids before insert and read the JSON columns whether the driver returns a String or a parsed value (the `pg_json` extension).
+Tables created by hand (PostgreSQL `uuid` ids, `jsonb` context) work too: the models set UUIDv7 ids before insert and read the JSON columns whether the driver returns a String or a parsed value (the `pg_json` extension). Rows written with ids that are not time-ordered (e.g. random UUIDv4) list in time order, since the store sorts by started_at (or duration) and only breaks ties by id. Adopted tables keep their own columns and indexes: add `saga_executions.duration_ms` (`Bignum`) and the indexes listed above in a migration of your own, and backfill the duration of finished executions.
 
 ## Architecture
 

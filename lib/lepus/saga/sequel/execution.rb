@@ -15,7 +15,7 @@ module Lepus
         dataset_module do
           where :in_progress, status: IN_PROGRESS_STATUSES
           where :completed, status: "completed"
-          order :recent_first, ::Sequel.desc(:created_at)
+          order :recent_first, ::Sequel.desc(:started_at), ::Sequel.desc(:id)
 
           def for_resource(type, id)
             where(resource_type: type, resource_id: id.to_s)
