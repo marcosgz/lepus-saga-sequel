@@ -1,0 +1,90 @@
+name: Build and Tests
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+
+jobs:
+  linter:
+    runs-on: ubuntu-latest
+    name: Rubocop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+      - name: Run linter
+        run: bundle exec rubocop
+
+  sqlite:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        ruby: ["3.3", "3.4"]
+    name: ruby-${{ matrix.ruby }} sqlite
+    env:
+      BUNDLE_GEMFILE: ci/Gemfile.sqlite
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ matrix.ruby }}
+          bundler-cache: true
+      - name: Run tests
+        run: bundle exec rspec
+
+  postgresql:
+    runs-on: ubuntu-latest
+    name: ruby-3.4 postgresql
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: lepus_saga_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      BUNDLE_GEMFILE: ci/Gemfile.postgresql
+      DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/lepus_saga_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+      - name: Run tests
+        run: bundle exec rspec
+
+  mariadb:
+    runs-on: ubuntu-latest
+    name: ruby-3.4 mariadb
+    services:
+      mariadb:
+        image: mariadb:11.4
+        env:
+          MARIADB_ROOT_PASSWORD: root
+          MARIADB_DATABASE: lepus_saga_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "healthcheck.sh --connect --innodb_initialized" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      BUNDLE_GEMFILE: ci/Gemfile.mariadb
+      DATABASE_URL: mysql2://root:root@127.0.0.1:3306/lepus_saga_test?fractional_seconds=true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install MariaDB client headers
+        run: sudo apt-get install -y libmariadb-dev
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+      - name: Run tests
+        run: bundle exec rspec
