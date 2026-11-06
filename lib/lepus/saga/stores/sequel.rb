@@ -83,6 +83,15 @@ module Lepus
           attempts_of(execution).chronological.all
         end
 
+        def executed_steps(executions)
+          steps = executions.to_h { |execution| [execution.id, []] }
+          return steps if steps.empty?
+
+          step_attempt_class.where(saga_execution_id: steps.keys, direction: "execute").distinct
+            .select_map(%i[saga_execution_id step_name]).each { |id, step| steps[id] << step }
+          steps
+        end
+
         def count_step_attempts(execution, step_name:, direction:, epoch:)
           attempts_of(execution).where(step_name: step_name, direction: direction, epoch: epoch).count
         end
@@ -110,7 +119,7 @@ module Lepus
         # Keyset paging in up to two index-friendly queries: the executions
         # with a value in (value, id) order, then those without one by id.
         def list_executions(sort: :started_at, direction: :desc, after: nil, limit: 50, **filters)
-          column, descending, nullable = list_order(sort, direction)
+          column, descending, nullable = list_order(sort, direction, filters)
           scope = matching_executions(**filters)
           order = ->(name) { descending ? ::Sequel.desc(name) : ::Sequel.asc(name) }
           if after
@@ -232,13 +241,16 @@ module Lepus
 
         # Rows strictly after the execution `after` in (column, id) order,
         # comparing against its stored value in a subquery so no precision is
-        # lost on the way through Ruby.
+        # lost on the way through Ruby. The bare bound on the column lets the
+        # (column, id) index start at the cursor instead of filtering every
+        # row before it.
         def beyond(column, after, descending)
           value = execution_class.where(id: after).select(column)
-          compare = descending ? :< : :>
-          ::Sequel.|(
-            ::Sequel::SQL::BooleanExpression.new(compare, ::Sequel[column], value),
-            ::Sequel.&(::Sequel::SQL::BooleanExpression.new(:"=", ::Sequel[column], value), ::Sequel::SQL::BooleanExpression.new(compare, ::Sequel[:id], after))
+          strict, bound = descending ? %i[< <=] : %i[> >=]
+          compare = ->(operator, left, right) { ::Sequel::SQL::BooleanExpression.new(operator, left, right) }
+          ::Sequel.&(
+            compare.call(bound, ::Sequel[column], value),
+            ::Sequel.|(compare.call(strict, ::Sequel[column], value), compare.call(strict, ::Sequel[:id], after))
           )
         end
 
