@@ -11,7 +11,7 @@ Gem::Specification.new do |spec|
   spec.summary = "Sequel store for Lepus::Saga"
   spec.description = "Keeps lepus-saga executions and step attempts in Sequel models (PostgreSQL, MySQL/MariaDB, SQLite), with migrations for the tables"
   spec.homepage = "https://github.com/marcosgz/lepus-saga-sequel"
-  spec.license = "MIT"
+  spec.license = "GPL-3.0-or-later"
   spec.required_ruby_version = ">= 3.3.0"
 
   spec.metadata["homepage_uri"] = spec.homepage
