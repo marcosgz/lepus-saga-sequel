@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## 0.3.1 - Unreleased
+* Changed: relicensed from MIT to GPL-3.0-or-later
 * Fixed: executions list in time order when their ids are not time-ordered (e.g. random UUIDv4): `list_executions` sorts and pages by (sort value, id) with `after`, `executions_for_resource` and `recent_first` order by started_at, then id
 * Added: the `duration_ms` bigint column, the `sort`/`direction`/`after` options of `list_executions` (keyset paging in at most two queries that start the `(column, id)` index at the cursor, executions without a duration last), the `finished_from`/`finished_to` filters and `executed_steps` in one query
 * Changed: the `from`/`to` filters and the series' starts use started_at; `lepus-saga ~> 0.3.1` is required
